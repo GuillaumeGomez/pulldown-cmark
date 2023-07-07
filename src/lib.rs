@@ -72,8 +72,11 @@ mod tree;
 
 use std::{convert::TryFrom, fmt::Display};
 
-pub use crate::parse::{BrokenLink, BrokenLinkCallback, LinkDef, OffsetIter, Parser, RefDefs};
+pub use crate::parse::{
+    BrokenLink, BrokenLinkCallback, Item, LinkDef, OffsetIter, Parser, RefDefs,
+};
 pub use crate::strings::{CowStr, InlineStr};
+pub use crate::tree::{BufferTree, Tree};
 
 /// Codeblock kind.
 #[derive(Clone, Debug, PartialEq)]

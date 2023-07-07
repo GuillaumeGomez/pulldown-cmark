@@ -42,6 +42,33 @@ impl Sub<usize> for TreeIndex {
     }
 }
 
+pub(crate) enum RefMutOrValue<'a, T> {
+    RefMut(&'a mut T),
+    Value(T),
+}
+
+impl<'a, T> std::ops::Deref for RefMutOrValue<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::RefMut(s) => s,
+            Self::Value(s) => s,
+        }
+    }
+}
+
+impl<'a, T> std::ops::DerefMut for RefMutOrValue<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::RefMut(s) => s,
+            Self::Value(s) => s,
+        }
+    }
+}
+
+pub type BufferTree = Tree<Item>;
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Node<T> {
     pub child: Option<TreeIndex>,
@@ -51,17 +78,17 @@ pub(crate) struct Node<T> {
 
 /// A tree abstraction, intended for fast building as a preorder traversal.
 #[derive(Clone)]
-pub(crate) struct Tree<T> {
+pub struct Tree<T> {
     nodes: Vec<Node<T>>,
     spine: Vec<TreeIndex>, // indices of nodes on path to current node
     cur: Option<TreeIndex>,
 }
 
 impl<T: Default> Tree<T> {
-    // Indices start at one, so we place a dummy value at index zero.
-    // The alternative would be subtracting one from every TreeIndex
-    // every time we convert it to usize to index our nodes.
-    pub(crate) fn with_capacity(cap: usize) -> Tree<T> {
+    /// Indices start at one, so we place a dummy value at index zero.
+    /// The alternative would be subtracting one from every TreeIndex
+    /// every time we convert it to usize to index our nodes.
+    pub fn with_capacity(cap: usize) -> Tree<T> {
         let mut nodes = Vec::with_capacity(cap);
         nodes.push(Node {
             child: None,
@@ -166,6 +193,17 @@ impl<T: Default> Tree<T> {
         self.cur = self[cur_ix].next;
         self.cur
     }
+
+    pub(crate) fn clear(&mut self) {
+        self.nodes.clear();
+        self.nodes.push(Node {
+            child: None,
+            next: None,
+            item: <T as Default>::default(),
+        });
+        self.spine.clear();
+        self.cur = None;
+    }
 }
 
 impl Tree<Item> {
@@ -229,12 +267,12 @@ impl<T> std::fmt::Debug for Tree<T>
 where
     T: std::fmt::Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn debug_tree<T>(
             tree: &Tree<T>,
             cur: TreeIndex,
             indent: usize,
-            f: &mut std::fmt::Formatter,
+            f: &mut std::fmt::Formatter<'_>,
         ) -> std::fmt::Result
         where
             T: std::fmt::Debug,

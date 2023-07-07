@@ -32,8 +32,8 @@ use crate::firstpass::run_first_pass;
 use crate::linklabel::{scan_link_label_rest, LinkLabel, ReferenceLabel};
 use crate::scanners::*;
 use crate::strings::CowStr;
-use crate::tree::{Tree, TreeIndex};
-use crate::{Alignment, CodeBlockKind, Event, HeadingLevel, LinkType, Options, Tag};
+use crate::tree::{RefMutOrValue, Tree, TreeIndex};
+use crate::{Alignment, BufferTree, CodeBlockKind, Event, HeadingLevel, LinkType, Options, Tag};
 
 // Allowing arbitrary depth nested parentheses inside link destinations
 // can create denial of service vulnerabilities if we're not careful.
@@ -43,10 +43,10 @@ use crate::{Alignment, CodeBlockKind, Event, HeadingLevel, LinkType, Options, Ta
 const LINK_MAX_NESTED_PARENS: usize = 5;
 
 #[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct Item {
-    pub start: usize,
-    pub end: usize,
-    pub body: ItemBody,
+pub struct Item {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) body: ItemBody,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -102,7 +102,7 @@ pub(crate) enum ItemBody {
     Root,
 }
 
-impl<'a> ItemBody {
+impl ItemBody {
     fn is_inline(&self) -> bool {
         matches!(
             *self,
@@ -117,7 +117,7 @@ impl<'a> ItemBody {
     }
 }
 
-impl<'a> Default for ItemBody {
+impl Default for ItemBody {
     fn default() -> Self {
         ItemBody::Root
     }
@@ -131,10 +131,10 @@ pub struct BrokenLink<'a> {
 }
 
 /// Markdown event iterator.
-pub struct Parser<'input, 'callback> {
+pub struct Parser<'input, 'callback, 'tree> {
     text: &'input str,
     options: Options,
-    tree: Tree<Item>,
+    tree: RefMutOrValue<'tree, Tree<Item>>,
     allocs: Allocations<'input>,
     broken_link_callback: BrokenLinkCallback<'input, 'callback>,
     html_scan_guard: HtmlScanGuard,
@@ -144,7 +144,7 @@ pub struct Parser<'input, 'callback> {
     link_stack: LinkStack,
 }
 
-impl<'input, 'callback> std::fmt::Debug for Parser<'input, 'callback> {
+impl<'input, 'callback, 'tree> std::fmt::Debug for Parser<'input, 'callback, 'tree> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Only print the fileds that have public types.
         f.debug_struct("Parser")
@@ -158,7 +158,7 @@ impl<'input, 'callback> std::fmt::Debug for Parser<'input, 'callback> {
     }
 }
 
-impl<'input, 'callback> Parser<'input, 'callback> {
+impl<'input, 'callback, 'tree> Parser<'input, 'callback, 'tree> {
     /// Creates a new event iterator for a markdown string without any options enabled.
     pub fn new(text: &'input str) -> Self {
         Parser::new_ext(text, Options::empty())
@@ -179,7 +179,48 @@ impl<'input, 'callback> Parser<'input, 'callback> {
         options: Options,
         broken_link_callback: BrokenLinkCallback<'input, 'callback>,
     ) -> Self {
-        let (mut tree, allocs) = run_first_pass(text, options);
+        let (mut tree, allocs) = run_first_pass(text, options, None);
+        tree.reset();
+        let inline_stack = Default::default();
+        let link_stack = Default::default();
+        let html_scan_guard = Default::default();
+        Parser {
+            text,
+            options,
+            tree,
+            allocs,
+            broken_link_callback,
+            inline_stack,
+            link_stack,
+            html_scan_guard,
+        }
+    }
+    /// Creates a new event iterator for a markdown string without any options enabled.
+    pub fn new_with_tree(text: &'input str, tree: &'tree mut BufferTree) -> Self {
+        Parser::new_ext_with_tree(text, Options::empty(), tree)
+    }
+
+    /// Creates a new event iterator for a markdown string with given options.
+    pub fn new_ext_with_tree(
+        text: &'input str,
+        options: Options,
+        tree: &'tree mut BufferTree,
+    ) -> Self {
+        Parser::new_with_broken_link_callback_with_tree(text, options, None, tree)
+    }
+
+    /// In case the parser encounters any potential links that have a broken
+    /// reference (e.g `[foo]` when there is no `[foo]: ` entry at the bottom)
+    /// the provided callback will be called with the reference name,
+    /// and the returned pair will be used as the link name and title if it is not
+    /// `None`.
+    pub fn new_with_broken_link_callback_with_tree(
+        text: &'input str,
+        options: Options,
+        broken_link_callback: BrokenLinkCallback<'input, 'callback>,
+        tree: &'tree mut BufferTree,
+    ) -> Self {
+        let (mut tree, allocs) = run_first_pass(text, options, Some(RefMutOrValue::RefMut(tree)));
         tree.reset();
         let inline_stack = Default::default();
         let link_stack = Default::default();
@@ -198,7 +239,7 @@ impl<'input, 'callback> Parser<'input, 'callback> {
 
     /// Returns a reference to the internal `RefDefs` object, which provides access
     /// to the internal map of reference definitions.
-    pub fn reference_definitions(&self) -> &RefDefs {
+    pub fn reference_definitions(&self) -> &RefDefs<'_> {
         &self.allocs.refdefs
     }
 
@@ -238,8 +279,9 @@ impl<'input, 'callback> Parser<'input, 'callback> {
 
                     if let Some((ix, uri, link_type)) = autolink {
                         let node = scan_nodes_to_ix(&self.tree, next, ix);
+                        let start = self.tree[cur_ix].item.start + 1;
                         let text_node = self.tree.create_node(Item {
-                            start: self.tree[cur_ix].item.start + 1,
+                            start,
                             end: ix - 1,
                             body: ItemBody::Text,
                         });
@@ -881,7 +923,7 @@ impl<'input, 'callback> Parser<'input, 'callback> {
     /// Consumes the event iterator and produces an iterator that produces
     /// `(Event, Range)` pairs, where the `Range` value maps to the corresponding
     /// range in the markdown source.
-    pub fn into_offset_iter(self) -> OffsetIter<'input, 'callback> {
+    pub fn into_offset_iter(self) -> OffsetIter<'input, 'callback, 'tree> {
         OffsetIter { inner: self }
     }
 }
@@ -911,7 +953,7 @@ pub(crate) fn scan_containers(tree: &Tree<Item>, line_start: &mut LineStart) -> 
     i
 }
 
-impl<'a> Tree<Item> {
+impl Tree<Item> {
     pub(crate) fn append_text(&mut self, start: usize, end: usize) {
         if end > start {
             if let Some(ix) = self.cur() {
@@ -1360,18 +1402,18 @@ pub type BrokenLinkCallback<'input, 'borrow> =
 /// Constructed from a `Parser` using its
 /// [`into_offset_iter`](struct.Parser.html#method.into_offset_iter) method.
 #[derive(Debug)]
-pub struct OffsetIter<'a, 'b> {
-    inner: Parser<'a, 'b>,
+pub struct OffsetIter<'a, 'b, 'c> {
+    inner: Parser<'a, 'b, 'c>,
 }
 
-impl<'a, 'b> OffsetIter<'a, 'b> {
+impl<'a, 'b, 'c> OffsetIter<'a, 'b, 'c> {
     /// Returns a reference to the internal reference definition tracker.
-    pub fn reference_definitions(&self) -> &RefDefs {
+    pub fn reference_definitions(&self) -> &RefDefs<'_> {
         self.inner.reference_definitions()
     }
 }
 
-impl<'a, 'b> Iterator for OffsetIter<'a, 'b> {
+impl<'a, 'b, 'c> Iterator for OffsetIter<'a, 'b, 'c> {
     type Item = (Event<'a>, Range<usize>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1502,7 +1544,7 @@ fn item_to_event<'a>(item: Item, text: &'a str, allocs: &Allocations<'a>) -> Eve
     Event::Start(tag)
 }
 
-impl<'a, 'b> Iterator for Parser<'a, 'b> {
+impl<'a, 'b, 'c> Iterator for Parser<'a, 'b, 'c> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Event<'a>> {
@@ -1532,7 +1574,7 @@ impl<'a, 'b> Iterator for Parser<'a, 'b> {
     }
 }
 
-impl FusedIterator for Parser<'_, '_> {}
+impl FusedIterator for Parser<'_, '_, '_> {}
 
 #[cfg(test)]
 mod test {
@@ -1541,7 +1583,7 @@ mod test {
 
     // TODO: move these tests to tests/html.rs?
 
-    fn parser_with_extensions(text: &str) -> Parser<'_, 'static> {
+    fn parser_with_extensions(text: &str) -> Parser<'_, 'static, '_> {
         let mut opts = Options::empty();
         opts.insert(Options::ENABLE_TABLES);
         opts.insert(Options::ENABLE_FOOTNOTES);

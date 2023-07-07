@@ -7,7 +7,8 @@ use std::ops::Range;
 use crate::parse::{scan_containers, Allocations, HeadingAttributes, Item, ItemBody, LinkDef};
 use crate::scanners::*;
 use crate::strings::CowStr;
-use crate::tree::{Tree, TreeIndex};
+use crate::tree::{RefMutOrValue, Tree, TreeIndex};
+use crate::BufferTree;
 use crate::Options;
 use crate::{
     linklabel::{scan_link_label_rest, LinkLabel},
@@ -18,14 +19,27 @@ use unicase::UniCase;
 
 /// Runs the first pass, which resolves the block structure of the document,
 /// and returns the resulting tree.
-pub(crate) fn run_first_pass(text: &str, options: Options) -> (Tree<Item>, Allocations) {
+pub(crate) fn run_first_pass<'a, 'b>(
+    text: &'a str,
+    options: Options,
+    tree: Option<RefMutOrValue<'b, BufferTree>>,
+) -> (RefMutOrValue<'b, BufferTree>, Allocations<'a>) {
     // This is a very naive heuristic for the number of nodes
     // we'll need.
-    let start_capacity = max(128, text.len() / 32);
+    let tree = match tree {
+        Some(mut t) => {
+            t.clear();
+            t
+        }
+        None => {
+            let start_capacity = max(128, text.len() / 32);
+            RefMutOrValue::Value(Tree::with_capacity(start_capacity))
+        }
+    };
     let lookup_table = &create_lut(&options);
     let first_pass = FirstPass {
         text,
-        tree: Tree::with_capacity(start_capacity),
+        tree,
         begin_list_item: false,
         last_line_blank: false,
         allocs: Allocations::new(),
@@ -36,9 +50,9 @@ pub(crate) fn run_first_pass(text: &str, options: Options) -> (Tree<Item>, Alloc
 }
 
 /// State for the first parsing pass.
-struct FirstPass<'a, 'b> {
+struct FirstPass<'a, 'b, 'c> {
     text: &'a str,
-    tree: Tree<Item>,
+    tree: RefMutOrValue<'c, BufferTree>,
     begin_list_item: bool,
     last_line_blank: bool,
     allocs: Allocations<'a>,
@@ -46,8 +60,8 @@ struct FirstPass<'a, 'b> {
     lookup_table: &'b LookupTable,
 }
 
-impl<'a, 'b> FirstPass<'a, 'b> {
-    fn run(mut self) -> (Tree<Item>, Allocations<'a>) {
+impl<'a, 'b, 'c> FirstPass<'a, 'b, 'c> {
+    fn run(mut self) -> (RefMutOrValue<'c, BufferTree>, Allocations<'a>) {
         let mut ix = 0;
         while ix < self.text.len() {
             ix = self.parse_block(ix);
@@ -1652,7 +1666,7 @@ fn extract_attribute_block_content_from_header_text(
 /// See also: [`Options::ENABLE_HEADING_ATTRIBUTES`].
 ///
 /// [`Options::ENABLE_HEADING_ATTRIBUTES`]: `crate::Options::ENABLE_HEADING_ATTRIBUTES`
-fn parse_inside_attribute_block(inside_attr_block: &str) -> Option<HeadingAttributes> {
+fn parse_inside_attribute_block(inside_attr_block: &str) -> Option<HeadingAttributes<'_>> {
     let mut id = None;
     let mut classes = Vec::new();
 
