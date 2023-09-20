@@ -47,6 +47,7 @@ struct HtmlWriter<'a, I, W> {
     table_alignments: Vec<Alignment>,
     table_cell_index: usize,
     numbers: HashMap<CowStr<'a>, usize>,
+    minify: bool,
 }
 
 impl<'a, I, W> HtmlWriter<'a, I, W>
@@ -54,7 +55,7 @@ where
     I: Iterator<Item = Event<'a>>,
     W: StrWrite,
 {
-    fn new(iter: I, writer: W) -> Self {
+    fn new(iter: I, writer: W, minify: bool) -> Self {
         Self {
             iter,
             writer,
@@ -63,6 +64,7 @@ where
             table_alignments: vec![],
             table_cell_index: 0,
             numbers: HashMap::new(),
+            minify,
         }
     }
 
@@ -78,7 +80,7 @@ where
         self.writer.write_str(s)?;
 
         if !s.is_empty() {
-            self.end_newline = s.ends_with('\n');
+            self.end_newline = self.minify || s.ends_with('\n');
         }
         Ok(())
     }
@@ -94,7 +96,7 @@ where
                 }
                 Text(text) => {
                     escape_html(&mut self.writer, &text)?;
-                    self.end_newline = text.ends_with('\n');
+                    self.end_newline = self.minify || text.ends_with('\n');
                 }
                 Code(text) => {
                     self.write("<code>")?;
@@ -108,13 +110,25 @@ where
                     self.write_newline()?;
                 }
                 HardBreak => {
-                    self.write("<br />\n")?;
+                    if self.minify {
+                        self.write("<br>")?;
+                    } else {
+                        self.write("<br />\n")?;
+                    }
                 }
                 Rule => {
-                    if self.end_newline {
-                        self.write("<hr />\n")?;
+                    if self.minify {
+                        if self.end_newline {
+                            self.write("<hr>")?;
+                        } else {
+                            self.write("\n<hr>")?;
+                        }
                     } else {
-                        self.write("\n<hr />\n")?;
+                        if self.end_newline {
+                            self.write("<hr />\n")?;
+                        } else {
+                            self.write("\n<hr />\n")?;
+                        }
                     }
                 }
                 FootnoteReference(name) => {
@@ -127,10 +141,18 @@ where
                     self.write("</a></sup>")?;
                 }
                 TaskListMarker(true) => {
-                    self.write("<input disabled=\"\" type=\"checkbox\" checked=\"\"/>\n")?;
+                    if self.minify {
+                        self.write("<input disabled type=\"checkbox\" checked>")?;
+                    } else {
+                        self.write("<input disabled=\"\" type=\"checkbox\" checked=\"\"/>\n")?;
+                    }
                 }
                 TaskListMarker(false) => {
-                    self.write("<input disabled=\"\" type=\"checkbox\"/>\n")?;
+                    if self.minify {
+                        self.write("<input disabled type=\"checkbox\"/>")?;
+                    } else {
+                        self.write("<input disabled=\"\" type=\"checkbox\"/>\n")?;
+                    }
                 }
             }
         }
@@ -149,7 +171,7 @@ where
             }
             Tag::Heading(level, id, classes) => {
                 if self.end_newline {
-                    self.end_newline = false;
+                    self.end_newline = self.minify || false;
                     self.write("<")?;
                 } else {
                     self.write("\n<")?;
@@ -202,10 +224,18 @@ where
                 }
             }
             Tag::BlockQuote => {
-                if self.end_newline {
-                    self.write("<blockquote>\n")
+                if self.minify {
+                    if self.end_newline {
+                        self.write("<blockquote>")
+                    } else {
+                        self.write("\n<blockquote>")
+                    }
                 } else {
-                    self.write("\n<blockquote>\n")
+                    if self.end_newline {
+                        self.write("<blockquote>\n")
+                    } else {
+                        self.write("\n<blockquote>\n")
+                    }
                 }
             }
             Tag::CodeBlock(info) => {
@@ -227,10 +257,18 @@ where
                 }
             }
             Tag::List(Some(1)) => {
-                if self.end_newline {
-                    self.write("<ol>\n")
+                if self.minify {
+                    if self.end_newline {
+                        self.write("<ol>")
+                    } else {
+                        self.write("\n<ol>")
+                    }
                 } else {
-                    self.write("\n<ol>\n")
+                    if self.end_newline {
+                        self.write("<ol>\n")
+                    } else {
+                        self.write("\n<ol>\n")
+                    }
                 }
             }
             Tag::List(Some(start)) => {
@@ -240,13 +278,25 @@ where
                     self.write("\n<ol start=\"")?;
                 }
                 write!(&mut self.writer, "{}", start)?;
-                self.write("\">\n")
+                if self.minify {
+                    self.write("\">")
+                } else {
+                    self.write("\">\n")
+                }
             }
             Tag::List(None) => {
-                if self.end_newline {
-                    self.write("<ul>\n")
+                if self.minify {
+                    if self.end_newline {
+                        self.write("<ul>")
+                    } else {
+                        self.write("\n<ul>")
+                    }
                 } else {
-                    self.write("\n<ul>\n")
+                    if self.end_newline {
+                        self.write("<ul>\n")
+                    } else {
+                        self.write("\n<ul>\n")
+                    }
                 }
             }
             Tag::Item => {
@@ -307,22 +357,42 @@ where
     fn end_tag(&mut self, tag: Tag) -> io::Result<()> {
         match tag {
             Tag::Paragraph => {
-                self.write("</p>\n")?;
+                if self.minify {
+                    self.write("</p>")?;
+                } else {
+                    self.write("</p>\n")?;
+                }
             }
             Tag::Heading(level, _id, _classes) => {
                 self.write("</")?;
                 write!(&mut self.writer, "{}", level)?;
-                self.write(">\n")?;
+                if self.minify {
+                    self.write(">")?;
+                } else {
+                    self.write(">\n")?;
+                }
             }
             Tag::Table(_) => {
-                self.write("</tbody></table>\n")?;
+                if self.minify {
+                    self.write("</tbody></table>")?;
+                } else {
+                    self.write("</tbody></table>\n")?;
+                }
             }
             Tag::TableHead => {
-                self.write("</tr></thead><tbody>\n")?;
+                if self.minify {
+                    self.write("</tr></thead><tbody>")?;
+                } else {
+                    self.write("</tr></thead><tbody>\n")?;
+                }
                 self.table_state = TableState::Body;
             }
             Tag::TableRow => {
-                self.write("</tr>\n")?;
+                if self.minify {
+                    self.write("</tr>")?;
+                } else {
+                    self.write("</tr>\n")?;
+                }
             }
             Tag::TableCell => {
                 match self.table_state {
@@ -336,19 +406,39 @@ where
                 self.table_cell_index += 1;
             }
             Tag::BlockQuote => {
-                self.write("</blockquote>\n")?;
+                if self.minify {
+                    self.write("</blockquote>")?;
+                } else {
+                    self.write("</blockquote>\n")?;
+                }
             }
             Tag::CodeBlock(_) => {
-                self.write("</code></pre>\n")?;
+                if self.minify {
+                    self.write("</code></pre>")?;
+                } else {
+                    self.write("</code></pre>\n")?;
+                }
             }
             Tag::List(Some(_)) => {
-                self.write("</ol>\n")?;
+                if self.minify {
+                    self.write("</ol>")?;
+                } else {
+                    self.write("</ol>\n")?;
+                }
             }
             Tag::List(None) => {
-                self.write("</ul>\n")?;
+                if self.minify {
+                    self.write("</ul>")?;
+                } else {
+                    self.write("</ul>\n")?;
+                }
             }
             Tag::Item => {
-                self.write("</li>\n")?;
+                if self.minify {
+                    self.write("</li>")?;
+                } else {
+                    self.write("</li>\n")?;
+                }
             }
             Tag::Emphasis => {
                 self.write("</em>")?;
@@ -364,7 +454,11 @@ where
             }
             Tag::Image(_, _, _) => (), // shouldn't happen, handled in start
             Tag::FootnoteDefinition(_) => {
-                self.write("</div>\n")?;
+                if self.minify {
+                    self.write("</div>")?;
+                } else {
+                    self.write("</div>\n")?;
+                }
             }
         }
         Ok(())
@@ -384,7 +478,7 @@ where
                 }
                 Html(text) | Code(text) | Text(text) => {
                     escape_html(&mut self.writer, &text)?;
-                    self.end_newline = text.ends_with('\n');
+                    self.end_newline = self.minify || text.ends_with('\n');
                 }
                 SoftBreak | HardBreak | Rule => {
                     self.write(" ")?;
@@ -433,7 +527,18 @@ pub fn push_html<'a, I>(s: &mut String, iter: I)
 where
     I: Iterator<Item = Event<'a>>,
 {
-    HtmlWriter::new(iter, s).run().unwrap();
+    HtmlWriter::new(iter, s, false).run().unwrap();
+}
+
+
+/// This function is the same as [`push_html`] except it generates smaller HTML and will not be
+/// compliant to commonmark spec.
+
+pub fn push_html_minify<'a, I>(s: &mut String, iter: I)
+where
+    I: Iterator<Item = Event<'a>>,
+{
+    HtmlWriter::new(iter, s, true).run().unwrap();
 }
 
 /// Iterate over an `Iterator` of `Event`s, generate HTML for each `Event`, and
@@ -474,5 +579,15 @@ where
     I: Iterator<Item = Event<'a>>,
     W: Write,
 {
-    HtmlWriter::new(iter, WriteWrapper(writer)).run()
+    HtmlWriter::new(iter, WriteWrapper(writer), false).run()
+}
+
+/// This function is the same as [`write_html`] except it generates smaller HTML and will not be
+/// compliant to commonmark spec.
+pub fn write_html_minify<'a, I, W>(writer: W, iter: I) -> io::Result<()>
+where
+    I: Iterator<Item = Event<'a>>,
+    W: Write,
+{
+    HtmlWriter::new(iter, WriteWrapper(writer), true).run()
 }
