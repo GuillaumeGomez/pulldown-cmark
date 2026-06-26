@@ -156,10 +156,6 @@ const form = document.getElementById("form");
   });
 }
 
-// mdBook adds a document-level keydown listener for the arrow keys for page navigation. This
-// interferes with editing the textarea, so we stop propagation of these keydown events.
-form.elements["md"].addEventListener("keydown", e => e.stopPropagation());
-
 const outputRendered = form.querySelector(".rendered").contentDocument.body;
 const outputHtml = form.querySelector(".html > code");
 const outputAst = form.querySelector(".ast");
