@@ -80,14 +80,6 @@ struct HtmlEscape<'a>(&'a mut String);
 
 impl Write for HtmlEscape<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for c in s.chars() {
-            match c {
-                '&' => self.0.push_str("&amp;"),
-                '<' => self.0.push_str("&lt;"),
-                '>' => self.0.push_str("&gt;"),
-                c => self.0.push(c),
-            }
-        }
-        Ok(())
+        pulldown_cmark_escape::escape_html_body_text(&mut self.0, s)
     }
 }

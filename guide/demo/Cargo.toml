@@ -9,4 +9,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pulldown-cmark = { path = "../../pulldown-cmark", default-features = false, features = ["hashbrown", "html"] }
+pulldown-cmark-escape = { path = "../../pulldown-cmark-escape" }
 dlmalloc = { version = "0.2.14", features = ["global"] }
