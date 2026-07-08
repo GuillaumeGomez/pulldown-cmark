@@ -943,6 +943,12 @@ impl<'input> ParserInner<'input> {
             };
             let start_ix = self.tree[body_node].item.start;
             let end_ix = self.tree[cur_ix].item.start;
+            // bail early in case the link is malformed: on some inputs the
+            // body can begin at or after the closing delimiter, which would
+            // otherwise underflow the length below and invert the slice.
+            if end_ix <= start_ix {
+                return None;
+            }
             let wikilink = match scan_wikilink_pipe(
                 block_text,
                 start_ix, // bounded by closing tag
@@ -2996,5 +3002,19 @@ text
              got {n1} events for 1× and {n8} events for 8× ({}× ratio, expected ≤20×)",
             n8 / n1.max(1)
         );
+    }
+
+    #[cfg(feature = "html")]
+    #[test]
+    fn wikilink_malformed_no_subtract_overflow() {
+        // Regression for #1108: on malformed image/wikilink input the
+        // wikilink body could begin at or after the closing delimiter, so
+        // `end_ix - start_ix` underflowed (panicking in debug) and later
+        // sliced an inverted range. handle_wikilink must bail early instead.
+        let test_str = " \u{fffd}  ![[] ]()]]";
+
+        let mut buf = String::new();
+        crate::html::push_html(&mut buf, Parser::new_ext(test_str, Options::all()));
+        assert!(!buf.is_empty());
     }
 }
