@@ -2879,3 +2879,14 @@ Link must be separated from title by at least one space
 <a href="https://example.com" title="test">a</a>
 <a href="https://example.com" title="test">a</a></p>
 ````````````````````````````````
+
+https://github.com/pulldown-cmark/pulldown-cmark/issues/1108
+
+A malformed image-wrapped wikilink must not underflow when the link body
+starts at or after the closing delimiter.
+
+```````````````````````````````` example_wikilinks
+![[] ]()]]
+.
+<p><img src="" alt="[] " />]]</p>
+````````````````````````````````

@@ -3428,3 +3428,13 @@ fn regression_test_214() {
 
     test_markdown_html(original, expected, false, false, false, false, false, false, false);
 }
+
+#[test]
+fn regression_test_215() {
+    let original = r##"![[] ]()]]
+"##;
+    let expected = r##"<p><img src="" alt="[] " />]]</p>
+"##;
+
+    test_markdown_html(original, expected, false, false, false, false, true, false, false);
+}
